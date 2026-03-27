@@ -1,0 +1,58 @@
+# Docker Compose for Linux + CUDA workstation (RTX 3090)
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Prerequisites on Linux:
+#   1. Install NVIDIA Container Toolkit:
+#      https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#   2. Verify: docker run --rm --gpus all nvidia/cuda:12.1-base nvidia-smi
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_NUM_GPU=99        # offload all layers to RTX 3090
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_FLASH_ATTENTION=1 # faster attention on CUDA
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ollama-bridge
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=ollama        # service name → internal DNS
+      - OLLAMA_PORT=11434
+      - OLLAMA_BACKEND=cuda       # force CUDA profile
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
+    driver: local
